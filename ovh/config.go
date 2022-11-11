@@ -101,7 +101,7 @@ func (c *Config) load() error {
 		targetClient.Client.Transport = cleanhttp.DefaultTransport()
 	}
 
-	httpClient.Transport = logging.NewTransport("OVH", httpClient.Transport)
+	httpClient.Transport = logging.NewLoggingHTTPTransport(httpClient.Transport)
 	c.OVHClient = targetClient
 
 	return nil

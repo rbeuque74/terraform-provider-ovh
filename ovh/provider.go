@@ -1,10 +1,11 @@
 package ovh
 
 import (
-	"fmt"
+	"context"
 	"os"
 	"sync"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/mitchellh/go-homedir"
 	ini "gopkg.in/ini.v1"
@@ -181,7 +182,7 @@ func Provider() *schema.Provider {
 			"ovh_vrack_iploadbalancing":                                   resourceVrackIpLoadbalancing(),
 		},
 
-		ConfigureFunc: configureProvider,
+		ConfigureContextFunc: configureProvider,
 	}
 }
 
@@ -198,7 +199,7 @@ func init() {
 	}
 }
 
-func configureProvider(d *schema.ResourceData) (interface{}, error) {
+func configureProvider(ctx context.Context, d *schema.ResourceData) (interface{}, diag.Diagnostics) {
 	config := Config{
 		Endpoint: d.Get("endpoint").(string),
 		lockAuth: &sync.Mutex{},
@@ -207,18 +208,18 @@ func configureProvider(d *schema.ResourceData) (interface{}, error) {
 	rawPath := "~/.ovh.conf"
 	configPath, err := homedir.Expand(rawPath)
 	if err != nil {
-		return &config, fmt.Errorf("Failed to expand config path %q: %s", rawPath, err)
+		return &config, diag.Errorf("Failed to expand config path %q: %s", rawPath, err)
 	}
 
 	if _, err := os.Stat(configPath); err == nil {
 		c, err := ini.Load(configPath)
 		if err != nil {
-			return nil, err
+			return nil, diag.FromErr(err)
 		}
 
 		section, err := c.GetSection(d.Get("endpoint").(string))
 		if err != nil {
-			return nil, err
+			return nil, diag.FromErr(err)
 		}
 		config.ApplicationKey = section.Key("application_key").String()
 		config.ApplicationSecret = section.Key("application_secret").String()
@@ -236,7 +237,7 @@ func configureProvider(d *schema.ResourceData) (interface{}, error) {
 	}
 
 	if err := config.loadAndValidate(); err != nil {
-		return nil, err
+		return nil, diag.FromErr(err)
 	}
 
 	return &config, nil

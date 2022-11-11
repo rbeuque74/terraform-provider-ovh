@@ -1,13 +1,17 @@
 package ovh
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/ovh/go-ovh/ovh"
@@ -51,10 +55,10 @@ func resourceOvhDomainZoneRecordImportState(
 
 func resourceOvhDomainZoneRecord() *schema.Resource {
 	return &schema.Resource{
-		Create: resourceOvhDomainZoneRecordCreate,
-		Read:   resourceOvhDomainZoneRecordRead,
-		Update: resourceOvhDomainZoneRecordUpdate,
-		Delete: resourceOvhDomainZoneRecordDelete,
+		CreateContext: resourceOvhDomainZoneRecordCreate,
+		Read:          resourceOvhDomainZoneRecordRead,
+		Update:        resourceOvhDomainZoneRecordUpdate,
+		Delete:        resourceOvhDomainZoneRecordDelete,
 		Importer: &schema.ResourceImporter{
 			State: resourceOvhDomainZoneRecordImportState,
 		},
@@ -86,7 +90,7 @@ func resourceOvhDomainZoneRecord() *schema.Resource {
 	}
 }
 
-func resourceOvhDomainZoneRecordCreate(d *schema.ResourceData, meta interface{}) error {
+func resourceOvhDomainZoneRecordCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	config := meta.(*Config)
 	zone := d.Get("zone").(string)
 
@@ -102,14 +106,16 @@ func resourceOvhDomainZoneRecordCreate(d *schema.ResourceData, meta interface{})
 
 	resultRecord := &OvhDomainZoneRecord{}
 
-	err := config.OVHClient.Post(
-		fmt.Sprintf("/domain/zone/%s/record", zone),
+	err := config.OVHClient.PostWithContext(
+		ctx,
+		"/domain/zone/"+url.PathEscape(zone)+"/record",
 		newRecord,
 		resultRecord,
 	)
 
 	if err != nil {
-		return fmt.Errorf("Failed to create OVH Record: %s", err)
+		tflog.Error(ctx, fmt.Sprintf("[ERROR] %#v", err))
+		return diag.Errorf("Failed to create OVH Record: %s", err)
 	}
 
 	// this is an API response BUG known by OVH team
@@ -120,18 +126,18 @@ func resourceOvhDomainZoneRecordCreate(d *schema.ResourceData, meta interface{})
 		log.Printf("[WARN] Known OVH API Bug with Inconsistency API result (id = 0): %v", resultRecord)
 		records := make([]int, 0)
 		if err := config.OVHClient.CallAPI("GET", fmt.Sprintf("/domain/zone/%s/record", zone), newRecord, &records, true); err != nil {
-			return fmt.Errorf("Error calling /domain/zone/%s. Zone may have been left with orphan records!:\n\t %q", zone, err)
+			return diag.Errorf("Error calling /domain/zone/%s. Zone may have been left with orphan records!:\n\t %q", zone, err)
 		}
 
 		if len(records) == 0 {
-			return fmt.Errorf("API inconsistency: record creation on zone %s didn't fail but unable to retrieve it.", zone)
+			return diag.Errorf("API inconsistency: record creation on zone %s didn't fail but unable to retrieve it.", zone)
 		}
 		// reverse order to keep the last item if found
 		sort.Sort(sort.Reverse(sort.IntSlice(records)))
 		for _, rec := range records {
 			record, err := ovhDomainZoneRecord(config.OVHClient, d, strconv.Itoa(rec), true)
 			if err != nil {
-				return fmt.Errorf("Error calling /domain/zone/%s. Zone may have been left with orphan records!:\n\t %q", zone, err)
+				return diag.Errorf("Error calling /domain/zone/%s. Zone may have been left with orphan records!:\n\t %q", zone, err)
 			}
 
 			if record == nil {
@@ -156,7 +162,7 @@ func resourceOvhDomainZoneRecordCreate(d *schema.ResourceData, meta interface{})
 		log.Printf("[WARN] OVH Domain zone refresh after record creation failed: %s", err)
 	}
 
-	return resourceOvhDomainZoneRecordRead(d, meta)
+	return diag.FromErr(resourceOvhDomainZoneRecordRead(d, meta))
 }
 
 func resourceOvhDomainZoneRecordRead(d *schema.ResourceData, meta interface{}) error {
